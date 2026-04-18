@@ -676,7 +676,7 @@ def run() -> Path:
     # Build canonical moments from enriched rows
     moments = _group_rows_by_moment(enriched)
     if not moments:
-        log.error("No valid moments found (missing paired perspectives).")
+        log.error("No valid moments found in enriched data.")
         return select_path()
 
     # Selection targets
@@ -740,9 +740,12 @@ def run() -> Path:
         log.info(f"")
         log.info(f"🏆 Added {pr_added} Strava PR segment moments to recommended list")
 
-    # Add zone bonus clips (start/end of ride)
+    # Add zone bonus clips (start/end of ride).
+    # Search the full moments list — not just the score-trimmed candidate pool —
+    # so that low-scoring start/end zone content isn't eliminated before zone
+    # selection runs. MAX_START/END_ZONE_CLIPS caps the count regardless.
     start_zone_moments, end_zone_moments = _find_zone_moments(
-        candidate_moments,
+        moments,
         recommended_moments,
         first_time,
         last_time,
@@ -830,6 +833,7 @@ def run() -> Path:
             row["recommended"] = "true" if row["index"] in recommended_indices else "false"
             row["strava_pr"] = "true" if row["index"] in pr_indices else "false"
             row["is_single_camera"] = "true" if not m.get("is_dual_camera", True) else "false"
+            row["paired"] = "true" if m.get("is_dual_camera", True) else "false"
             # Add segment details for PR clips (for trophy badge overlay)
             if row["index"] in pr_indices:
                 epoch = _sf(row.get("abs_time_epoch"))

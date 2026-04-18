@@ -210,11 +210,16 @@ class ManualSelectionWindow(QDialog):
         """Update counter label and button text."""
         selected = self.model.selected_count
         total = self.model.total_count
+        single_cam = sum(1 for m in self.model.moments if m.is_single_camera)
+        dual_cam = total - single_cam
 
         self.counter_label.setText(f"Selected: {selected} / {total} clips")
         self.ok_btn.setText(f"Use {selected} Clips & Continue")
+        parts = [f"Showing {total} moments"]
+        if single_cam:
+            parts.append(f"{dual_cam} dual-camera, {single_cam} single-camera")
         self.status_label.setText(
-            f"Showing {total} moments (2 perspectives each)  •  "
+            f"{' • '.join(parts)}  •  "
             f"Pre-selected: {selected} / {self.target_clips} target"
         )
 
@@ -230,14 +235,25 @@ class ManualSelectionWindow(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        # Two columns: both perspectives side-by-side
+        # Two columns: both perspectives side-by-side.
+        # For single-camera moments, the missing camera column shows a placeholder.
         for row_idx, moment in enumerate(self.model.moments):
             try:
-                card1 = self._create_perspective_card(moment, primary_idx=0)
-                card2 = self._create_perspective_card(moment, primary_idx=1)
+                if moment.is_single_camera:
+                    available_idx = 0 if moment.rows[0] is not None else 1
+                    missing_idx = 1 - available_idx
 
-                self.grid_layout.addWidget(card1, row_idx, 0)
-                self.grid_layout.addWidget(card2, row_idx, 1)
+                    card = self._create_perspective_card(moment, primary_idx=available_idx)
+                    placeholder = self._create_placeholder_card(missing_idx)
+
+                    self.grid_layout.addWidget(card, row_idx, available_idx)
+                    self.grid_layout.addWidget(placeholder, row_idx, missing_idx)
+                else:
+                    card1 = self._create_perspective_card(moment, primary_idx=0)
+                    card2 = self._create_perspective_card(moment, primary_idx=1)
+
+                    self.grid_layout.addWidget(card1, row_idx, 0)
+                    self.grid_layout.addWidget(card2, row_idx, 1)
             except Exception as e:
                 self.log(f"Failed to create widget for moment {row_idx}: {e}", "error")
 
@@ -272,6 +288,18 @@ class ManualSelectionWindow(QDialog):
         # PiP composite image
         pip_widget = self._create_pip_widget(primary_row, partner_row)
         layout.addWidget(pip_widget)
+
+        # Single Camera badge (shown when partner camera was unavailable)
+        if moment.is_single_camera:
+            cam_name = primary_row.get("camera", "Camera")
+            single_cam_badge = QLabel(f"Single Camera  ({cam_name})")
+            single_cam_badge.setAlignment(Qt.AlignCenter)
+            single_cam_badge.setStyleSheet(
+                "font-size: 11px; font-weight: 700; color: #5D4037; "
+                "background-color: #FFF8E1; padding: 3px 8px; "
+                "border: 1px solid #FFCA28; border-radius: 4px; margin: 2px 0;"
+            )
+            layout.addWidget(single_cam_badge)
 
         # Strava PR badge (if applicable)
         is_strava_pr = primary_row.get("strava_pr") == "true"
@@ -379,6 +407,44 @@ class ManualSelectionWindow(QDialog):
                 painter.end()
 
         return primary
+
+    def _create_placeholder_card(self, missing_idx: int) -> QWidget:
+        """
+        Create a non-interactive placeholder card for a missing camera perspective.
+
+        Args:
+            missing_idx: 0 if front camera is missing, 1 if rear camera is missing
+        """
+        camera_label = "Front Camera (Fly12Sport)" if missing_idx == 0 else "Rear Camera (Fly6Pro)"
+
+        container = QFrame()
+        container.setFrameShape(QFrame.Box)
+        container.setStyleSheet(
+            "QFrame { background-color: #E0E0E0; border: 2px dashed #BDBDBD; border-radius: 8px; }"
+        )
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Grey image placeholder matching the PiP widget dimensions
+        image_placeholder = QLabel()
+        image_placeholder.setMinimumSize(640, 360)
+        image_placeholder.setAlignment(Qt.AlignCenter)
+        image_placeholder.setStyleSheet(
+            "background-color: #424242; border-radius: 4px; color: #9E9E9E; font-size: 13px;"
+        )
+        image_placeholder.setText("No footage")
+        layout.addWidget(image_placeholder)
+
+        # Label identifying which camera is absent
+        absent_label = QLabel(f"No footage — {camera_label}")
+        absent_label.setAlignment(Qt.AlignCenter)
+        absent_label.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #757575; padding: 4px;"
+        )
+        layout.addWidget(absent_label)
+
+        return container
 
     # --------------------------------------------------
     # Selection handling

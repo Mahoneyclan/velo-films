@@ -124,6 +124,12 @@ class ProjectController:
                 # Reset camera registry to pick up new offsets
                 reset_registry()
 
+            # Allow per-project override of how far before GPX session start to extract frames.
+            # Increase this when a camera started recording before the GPX session began.
+            if "GPX_GRID_EXTENSION_M" in overrides:
+                CFG.GPX_GRID_EXTENSION_M = float(overrides["GPX_GRID_EXTENSION_M"])
+                self.log(f"Loaded GPX grid extension: {CFG.GPX_GRID_EXTENSION_M} min", "info")
+
             # Apply per-camera timezones (new format)
             if "CAMERA_TIMEZONES" in overrides:
                 CFG.CAMERA_TIMEZONES = dict(overrides["CAMERA_TIMEZONES"])
