@@ -284,9 +284,9 @@ class Config:
 
     # --- PiP & minimap overlay ---
     PIP_SCALE_RATIO: float = field(default_factory=lambda: _get_config_value('PIP_SCALE_RATIO', 0.30))
-    PIP_MARGIN: int = field(default_factory=lambda: _get_config_value('PIP_MARGIN', 30))
-    # Minimap size as fraction of video width (same as PIP_SCALE_RATIO for consistency)
-    # 0.30 = ~576px on 1920p video, matches PIP size exactly
+    PIP_MARGIN: int = field(default_factory=lambda: _get_config_value('PIP_MARGIN', 0))
+    # Minimap size as fraction of video width (legacy ratio; actual minimap is padded
+    # to exactly MAP_W × MAP_W = 390×390 by minimap_prerenderer, not derived from this)
     MINIMAP_SIZE_RATIO: float = field(
         default_factory=lambda: _get_config_value('MINIMAP_SIZE_RATIO', 0.30)
     )
@@ -311,23 +311,53 @@ class Config:
     # --- HUD ---
     HUD_ANCHOR: str = "bottom_left"
     HUD_SCALE: float = 1.0
-    HUD_PADDING: tuple[int, int] = (30, 30)
+    # x=0 → flush left; y=ELEV_STRIP_H → gauge composite sits just above the elevation strip
+    HUD_PADDING: tuple[int, int] = (0, 75)
     SPEED_GAUGE_SIZE: int = field(default_factory=lambda: _get_config_value('SPEED_GAUGE_SIZE', 300))
     SMALL_GAUGE_SIZE: int = field(default_factory=lambda: _get_config_value('SMALL_GAUGE_SIZE', 150))
     GAUGE_ORDER: list[str] = field(default_factory=lambda: ["cadence", "hr", "gradient", "speed", "elev"])
     GAUGE_MAXES: dict = field(default_factory=lambda: {
-        "speed": 80, "cadence": 120, "hr": 180, "elev": 5000,
-        "gradient_min": -10, "gradient_max": 10,
+        "speed": 100, "cadence": 130, "hr": 160, "elev": 99999,
+        "gradient_min": -25, "gradient_max": 25,
     })
 
-    # Composite gauge settings (pre-rendered single PNG)
-    GAUGE_COMPOSITE_SIZE: tuple[int, int] = (576, 324)  # Matches PIP size at 1920p
-    GAUGE_LAYOUT: str = field(default_factory=lambda: _get_config_value('GAUGE_LAYOUT', 'cluster'))
+    # --- Bottom-bar geometry ---
+    # Output frame: 1920×1080 (source footage 2560×1440 is scaled down at render time)
+    # Layout left → right:
+    #   [Gauge 972px][MAP 390px][8px gap][PiP ≈693px] → fills to ~2063px; main video behind
+    #   Below MAP+PiP: [elevation strip 948px × 75px]
+    #
+    #   Gauge  x=0..972      y=811..1005  h=194  (5 × 194px cells)
+    #   MAP    x=972..1362   y=615..1005  h=390  w=390 (square padded canvas)
+    #   PiP    x=1370..~2063 y=615..1005  h=390  w≈693 (scale=-1:390 from 2560×1440 source)
+    #   Elev   x=972..1920   y=1005..1080 h=75   w=948
+    #
+    #   Both MAP and PiP share bottom edge at y=1005 via H-h-MAP_PIP_BOTTOM expression.
+    GAUGE_BAR_H: int = 194      # height of each gauge cell
+    GAUGE_PAD: int = 8          # padding between cell edge and arc circle
+    GAUGE_DIAM: int = 194       # arc circle diameter = GAUGE_COMPOSITE_SIZE[0] // 5
+    PIP_H: int = 390            # PiP height; pip_w ≈ 693 (scale=-1:390 from 2560×1440 source)
+    MAP_W: int = 390            # Map canvas size (square); matches PIP_H for shared bottom edge
+    MAP_GAP: int = 8            # gap in px between map right edge and PiP left edge
+    ELEV_STRIP_H: int = 75      # height of elevation strip at very bottom
+    # MAP_PIP_BOTTOM = ELEV_STRIP_H → panel bottom at y = H - 75 = 1005 = gauge bottom
+    MAP_PIP_BOTTOM: int = 75    # px from frame bottom to bottom edge of map and PiP
+
+    # Composite gauge settings (pre-rendered PNG or video)
+    # 5 equal cells × 194px = 972px wide, 194px tall
+    GAUGE_COMPOSITE_SIZE: tuple[int, int] = (972, 194)
+    GAUGE_LAYOUT: str = field(default_factory=lambda: _get_config_value('GAUGE_LAYOUT', 'strip'))
     ENABLED_GAUGES: list[str] = field(default_factory=lambda: _get_config_value(
         'ENABLED_GAUGES', ["speed", "cadence", "hr", "elev", "gradient"]
     ))
     # Dynamic gauge mode: True = per-second updates (video), False = static PNG per clip
     DYNAMIC_GAUGES: bool = field(default_factory=lambda: _get_config_value('DYNAMIC_GAUGES', True))
+
+    # --- Output resolution ---
+    # Source footage (Cycliq) is 2560×1440; all overlay geometry is designed for 1920×1080.
+    # The main video is always scaled to OUTPUT_W×OUTPUT_H before overlays are applied.
+    OUTPUT_W: int = 1920
+    OUTPUT_H: int = 1080
 
     # --- Encoding ---
     VIDEO_CODEC: str = field(default_factory=lambda: _get_config_value('VIDEO_CODEC', 'libx264'))

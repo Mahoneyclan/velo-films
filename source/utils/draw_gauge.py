@@ -1,174 +1,165 @@
 # source/utils/draw_gauge.py
 """
-Gauge drawing primitives for circular gauges.
-Creates speed, cadence, heart rate, elevation, and gradient gauges.
+Arc-style gauge drawing primitives for VeloFilms telemetry overlay.
+
+All five gauges use the same visual style:
+  • 240° arc open at the bottom, spanning from lower-left (150°) to
+    lower-right (390° = 30°) in PIL's clockwise-from-3-o'clock system.
+  • Thick bright-green filled arc sweeping clockwise from the start,
+    proportional to value in [min_val, max_val].
+  • Dim dark arc for the unfilled remainder.
+  • Dark semi-transparent circular background (black at ~63 % opacity).
+  • Large white value text centred inside; small white unit label below.
 """
 
 from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFont
-import math
+
+# ── Colour palette ────────────────────────────────────────────────────────────
+_GREEN = (0, 230, 77)       # bright green ≈ #00E64D
+_DIM   = (0, 55, 22)        # dim dark green for the unfilled arc segment
+_BG    = (0, 0, 0, 100)    # semi-transparent black  (alpha 100 ≈ 39 %)
+_WHITE = (255, 255, 255, 255)
+
+# ── Arc geometry ──────────────────────────────────────────────────────────────
+# PIL degrees: 0° = 3 o'clock, increasing clockwise (y-axis points down).
+#   150° = lower-left  (between 6 o'clock and 9 o'clock)
+#   390° = lower-right (= 30°, between 3 o'clock and 6 o'clock)
+# The arc sweeps 240° from lower-left → left → top → right → lower-right.
+# The open gap at the bottom spans 120° (from 30° back to 150° clockwise).
+_ARC_START = 150
+_ARC_END   = 390   # PIL draws start→end clockwise, so 150→390 = 240°
+_ARC_SPAN  = 240
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def safe_font(size: int):
-    """Load system font with fallback."""
+    """Load system font with fallback to PIL default."""
     try:
         return ImageFont.truetype("/System/Library/Fonts/SFNS.ttf", size)
     except Exception:
         return ImageFont.load_default()
 
 
-def _scale_font_size(base_size: int, gauge_size: int, reference_size: int) -> int:
-    """Scale font size proportionally to gauge size."""
-    return max(8, int(base_size * gauge_size / reference_size))
+def _sc(base: int, gauge_size: int, ref: int = 160) -> int:
+    """Scale *base* pixels proportionally to *gauge_size* (reference = 160 px)."""
+    return max(1, int(base * gauge_size / ref))
 
-def _polar(cx, cy, r, ang_deg):
-    """Convert polar coordinates to cartesian."""
-    a = math.radians(ang_deg)
-    return int(cx + r * math.cos(a)), int(cy + r * math.sin(a))
 
-def _draw_dial(draw, cx, cy, r_outer, start_deg, end_deg,
-               n_ticks, red_frac=0.8, two_sided: bool = False):
-    """Draw gauge tick marks."""
-    r_ticks = r_outer - 12
-    for i in range(n_ticks + 1):
-        frac = i / n_ticks
-        ang = start_deg + (end_deg - start_deg) * frac
-        if two_sided:
-            color = "red" if (frac < (1 - red_frac) or frac > red_frac) else "black"
-        else:
-            color = "red" if frac > red_frac else "black"
-        x1, y1 = _polar(cx, cy, r_ticks, ang)
-        x2, y2 = _polar(cx, cy, r_ticks - 10, ang)
-        draw.line([(x1, y1), (x2, y2)], fill=color, width=2)
+# ── Core drawing function ─────────────────────────────────────────────────────
 
-def _draw_needle(draw, cx, cy, r_outer, ang_val):
-    """Draw gauge needle."""
-    r_needle = r_outer - 18
-    nx, ny = _polar(cx, cy, r_needle, ang_val)
-    draw.line([(cx, cy), (nx, ny)], fill="black", width=5)
-    draw.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill="black")
+def draw_arc_gauge(
+    img: Image.Image,
+    rect: tuple,
+    value: float,
+    min_val: float,
+    max_val: float,
+    unit: str,
+    title: str = "",
+) -> None:
+    """
+    Draw an arc-style gauge onto *img* inside *rect* = (x, y, w, h).
 
-def _draw_small_gauge(img, rect, value: float,
-                      min_val: float, max_val: float,
-                      title: str, unit: str,
-                      start_deg: int, end_deg: int,
-                      two_sided: bool = False,
-                      side: str = "center"):
-    """Draw a small circular gauge with semi-transparent background."""
+    The filled green arc sweeps clockwise from the lower-left start point
+    by an amount proportional to (*value* − *min_val*) / (*max_val* − *min_val*).
+    An optional *title* label is drawn in white inside the open gap at the bottom.
+    """
     x, y, w, h = rect
-    cx, cy = x + w // 2, y + h // 2
-    r_outer = min(w, h) // 2 - 6
+    cx = x + w // 2
+    cy = y + h // 2
+    gauge_size = min(w, h)
+
+    # Geometry: leave a small margin so the arc doesn't clip the cell edges
+    pad   = _sc(6, gauge_size)            # margin from rect edge to arc outer edge
+    r     = gauge_size // 2 - pad         # arc centreline radius
+    arc_w = max(6, _sc(10, gauge_size))   # arc stroke width (≈ 10 px at 160 px gauge)
+
     draw = ImageDraw.Draw(img)
 
-    # Semi-transparent white background (RGBA) - alpha 160 = ~63% opaque
-    draw.ellipse((x + 4, y + 4, x + w - 4, y + h - 4),
-                 fill=(255, 255, 255, 160), outline="black", width=2)
+    # ── Background: dark semi-transparent circle ──────────────────────────────
+    bg_r = r + arc_w // 2 + 1  # cover full arc width plus 1-px border
+    draw.ellipse(
+        (cx - bg_r, cy - bg_r, cx + bg_r, cy + bg_r),
+        fill=_BG,
+    )
 
-    frac_val = (value - min_val) / (max_val - min_val if max_val != min_val else 1.0)
-    frac_val = max(0.0, min(frac_val, 1.0))
-    ang_val = start_deg + (end_deg - start_deg) * frac_val
+    # Arc bounding box (PIL centres the stroke on the bbox perimeter)
+    arc_box = (cx - r, cy - r, cx + r, cy + r)
 
-    _draw_dial(draw, cx, cy, r_outer, start_deg, end_deg,
-               20, red_frac=0.9, two_sided=two_sided)
-    _draw_needle(draw, cx, cy, r_outer, ang_val)
+    # ── Unfilled arc (dim dark green, full 240° span) ─────────────────────────
+    draw.arc(arc_box, start=_ARC_START, end=_ARC_END, fill=_DIM, width=arc_w)
 
-    # Fonts - scaled based on gauge size (reference size 120px)
-    gauge_size = min(w, h)
-    title_font = safe_font(_scale_font_size(9, gauge_size, 120))
-    val_font = safe_font(_scale_font_size(18, gauge_size, 120))
-    unit_font = safe_font(_scale_font_size(11, gauge_size, 120))
+    # ── Filled arc (bright green, proportional to value) ─────────────────────
+    span = max_val - min_val
+    frac = (value - min_val) / span if span != 0 else 0.0
+    frac = max(0.0, min(frac, 1.0))
+    if frac > 0.0:
+        val_end = _ARC_START + _ARC_SPAN * frac
+        draw.arc(arc_box, start=_ARC_START, end=val_end, fill=_GREEN, width=arc_w)
 
-    # Title centered near top - scaled offset
-    title_offset = int(8 * gauge_size / 120)
-    tw = draw.textlength(title, font=title_font)
-    draw.text((cx - tw // 2, cy + title_offset), title, fill="black", font=title_font)
-
-    # Value + unit placement
-    val_txt = f"{int(round(value))}"
-    val_w = draw.textlength(val_txt, font=val_font)
-
+    # ── Value and unit text ───────────────────────────────────────────────────
+    val_txt  = f"{int(round(value))}"
     unit_txt = unit
-    unit_w = draw.textlength(unit_txt, font=unit_font)
 
-    offset_10 = int(10 * gauge_size / 120)
-    if side == "left":
-        vx = cx - r_outer + offset_10
-    elif side == "right":
-        vx = cx + r_outer - val_w - offset_10
-    else:  # center
-        vx = cx - val_w // 2
+    val_font  = safe_font(_sc(44, gauge_size))
+    unit_font = safe_font(_sc(17, gauge_size))
 
-    vy = cy - int(30 * gauge_size / 120)  # vertical anchor at hub height, scaled
-    unit_gap = int(20 * gauge_size / 120)
-    draw.text((vx, vy), val_txt, fill="black", font=val_font)
-    draw.text((vx + (val_w - unit_w)//2, vy + unit_gap), unit_txt, fill="black", font=unit_font)
+    val_w  = int(draw.textlength(val_txt,  font=val_font))
+    unit_w = int(draw.textlength(unit_txt, font=unit_font))
 
-# --- Gauge types ---
+    # Value height via getbbox (Pillow ≥ 8) with getsize fallback
+    try:
+        bb   = val_font.getbbox(val_txt)
+        val_h = bb[3] - bb[1]
+    except AttributeError:
+        _, val_h = val_font.getsize(val_txt)  # type: ignore[attr-defined]
 
-def draw_speed_gauge(img, rect, value: float, max_val: float):
-    """Draw large speed gauge (bottom horizontal arc) with semi-transparent background."""
-    x, y, w, h = rect
-    cx, cy = x + w // 2, y + h // 2
-    r_outer = min(w, h) // 2 - 6
-    gauge_size = min(w, h)
-    draw = ImageDraw.Draw(img)
+    # Value: centred horizontally, nudged slightly above the gauge centre
+    nudge = _sc(8, gauge_size)
+    val_x = cx - val_w // 2
+    val_y = cy - val_h // 2 - nudge
 
-    # Semi-transparent white background (RGBA) - alpha 160 = ~63% opaque
-    draw.ellipse((x + 4, y + 4, x + w - 4, y + h - 4),
-                 fill=(255, 255, 255, 160), outline="black", width=3)
+    draw.text((val_x, val_y), val_txt,  fill=_WHITE, font=val_font)
 
-    # Horizontal bottom arc (speedometer style), left → right
-    start_deg, end_deg = 180, 360
-    _draw_dial(draw, cx, cy, r_outer, start_deg, end_deg, 40, red_frac=0.5)
+    # Unit: centred horizontally, below the value text with clear separation
+    gap    = _sc(10, gauge_size)
+    unit_x = cx - unit_w // 2
+    unit_y = val_y + val_h + gap
 
-    frac_val = 0.0 if max_val <= 0 else max(0.0, min(value / max_val, 1.0))
-    ang_val = start_deg + (end_deg - start_deg) * frac_val
-    _draw_needle(draw, cx, cy, r_outer, ang_val)
+    draw.text((unit_x, unit_y), unit_txt, fill=_WHITE, font=unit_font)
 
-    # Place readout below the needle hub - fonts scaled (reference size 240px)
-    val_font = safe_font(_scale_font_size(60, gauge_size, 240))
-    txt = f"{int(round(value))}"
-    tw = draw.textlength(txt, font=val_font)
-    val_offset = int(10 * gauge_size / 240)
-    draw.text((cx - tw // 2, cy + val_offset), txt, fill="black", font=val_font)
+    # ── Title label: sits in the open gap at the bottom of the arc ───────────
+    # Arc endpoints are at 150° and 30°; their y-offset = r × sin(30°) = r × 0.5
+    # Title is placed just below that point, centred horizontally.
+    if title:
+        title_font = safe_font(_sc(13, gauge_size))
+        title_w    = int(draw.textlength(title, font=title_font))
+        title_x    = cx - title_w // 2
+        title_y    = cy + int(r * 0.5) + arc_w // 2 + _sc(3, gauge_size)
+        draw.text((title_x, title_y), title, fill=_WHITE, font=title_font)
 
-    unit_font = safe_font(_scale_font_size(20, gauge_size, 240))
-    txt = "km/h"
-    tw = draw.textlength(txt, font=unit_font)
-    unit_offset = int(70 * gauge_size / 240)
-    draw.text((cx - tw // 2, cy + unit_offset), txt, fill="black", font=unit_font)
 
-def draw_cadence_gauge(img, rect, value, max_val):
-    """Draw cadence gauge (horizontal arc like speed gauge)."""
-    _draw_small_gauge(
-        img, rect, value, 0, max_val,
-        "CADENCE", "rpm",
-        start_deg=180, end_deg=360,   # horizontal bottom arc
-        side="center"
-    )
+# ── Public gauge wrappers ─────────────────────────────────────────────────────
+# Signatures are identical to the originals so call-sites need no changes.
 
-def draw_hr_gauge(img, rect, value, max_val):
-    """Draw heart rate gauge (left half)."""
-    _draw_small_gauge(
-        img, rect, value, 80, max_val,
-        "HEART RATE", "bpm",
-        start_deg=90, end_deg=270,    # left half
-        side="right"                  # readout right of hub
-    )
+def draw_speed_gauge(img: Image.Image, rect, value: float, min_val: float, max_val: float) -> None:
+    draw_arc_gauge(img, rect, value, min_val, max_val, "km/h", "SPEED")
 
-def draw_elev_gauge(img, rect, value, max_val):
-    """Draw elevation gauge (left half)."""
-    _draw_small_gauge(
-        img, rect, value, 0, max_val,
-        "ELEVATION", "m",
-        start_deg=90, end_deg=270,    # left half
-        side="right"
-    )
 
-def draw_gradient_gauge(img, rect, value, min_val, max_val):
-    """Draw gradient gauge (horizontal arc, two-sided for +/-)."""
-    _draw_small_gauge(
-        img, rect, value, min_val, max_val,
-        "GRADIENT", "%",
-        start_deg=180, end_deg=360,   # horizontal bottom arc
-        two_sided=True, side="center"
-    )
+def draw_cadence_gauge(img: Image.Image, rect, value: float, min_val: float, max_val: float) -> None:
+    draw_arc_gauge(img, rect, value, min_val, max_val, "rpm", "CADENCE")
+
+
+def draw_hr_gauge(img: Image.Image, rect, value: float, min_val: float, max_val: float) -> None:
+    draw_arc_gauge(img, rect, value, min_val, max_val, "bpm", "HR")
+
+
+def draw_elev_gauge(img: Image.Image, rect, value: float, min_val: float, max_val: float) -> None:
+    draw_arc_gauge(img, rect, value, min_val, max_val, "m", "ELEVATION")
+
+
+def draw_gradient_gauge(
+    img: Image.Image, rect, value: float, min_val: float, max_val: float
+) -> None:
+    draw_arc_gauge(img, rect, value, min_val, max_val, "%", "GRADIENT")

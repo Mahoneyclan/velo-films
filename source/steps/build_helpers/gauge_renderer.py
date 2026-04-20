@@ -35,8 +35,8 @@ class GaugeRenderer:
             select_csv_path: Path to select.csv for computing maxes
         """
         self.output_dir = _mk(output_dir)
-        self.gauge_maxes = gauge_overlay.compute_gauge_maxes(select_csv_path)
-        log.debug(f"[gauge] Computed gauge maxes: {self.gauge_maxes}")
+        self.gauge_ranges = gauge_overlay.compute_gauge_ranges(select_csv_path)
+        log.debug(f"[gauge] Computed gauge ranges: {self.gauge_ranges}")
     
     def render_gauges_for_clip(self, row: Dict, clip_idx: int) -> Dict[str, Path]:
         """
@@ -65,7 +65,7 @@ class GaugeRenderer:
         try:
             gauge_images = gauge_overlay.create_all_gauge_images(
                 telemetry,
-                self.gauge_maxes,
+                self.gauge_ranges,
                 clip_gauge_dir,
                 clip_idx
             )

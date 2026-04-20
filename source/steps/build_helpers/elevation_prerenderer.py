@@ -30,12 +30,11 @@ class ElevationPrerenderer:
         self.output_dir = _mk(output_dir)
         self.elevation_data = load_elevation_data(flatten_path())
 
-        # Width matches PIP (same as minimap max_width)
-        video_width, video_height = CFG.MAP_SPLASH_SIZE
-        pip_width = int(video_width * CFG.PIP_SCALE_RATIO)
-        self.width = pip_width  # Same width as PIP
-        # Height is ~25% of width for a wide strip
-        self.height = max(80, int(self.width * 0.25))
+        # Elevation strip spans from the last gauge's right edge to the frame edge.
+        # Anchored at x=GAUGE_COMPOSITE_SIZE[0] so it always covers the map+PiP area
+        # regardless of the map's variable width.
+        self.width  = 1920 - CFG.GAUGE_COMPOSITE_SIZE[0]   # 1920 - 1080 = 840
+        self.height = CFG.ELEV_STRIP_H                      # 75 px
 
     def prerender_all(self, rows: List[Dict]) -> Dict[int, Path]:
         """

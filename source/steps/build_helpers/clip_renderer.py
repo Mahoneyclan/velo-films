@@ -221,8 +221,30 @@ class ClipRenderer:
             "-i",
             str(main_video),
         ]
-        filters: List[str] = []
-        current_stream = "[0:v]"
+        # Always scale main video to target output resolution first.
+        # Source footage (Cycliq) is 2560×1440; overlays are designed for 1920×1080.
+        filters: List[str] = [
+            f"[0:v]scale={CFG.OUTPUT_W}:{CFG.OUTPUT_H}:"
+            f"force_original_aspect_ratio=decrease,"
+            f"pad={CFG.OUTPUT_W}:{CFG.OUTPUT_H}:(ow-iw)/2:(oh-ih)/2[vmain]"
+        ]
+        current_stream = "[vmain]"
+
+        # ── Layout (1920×1080), left → right: ────────────────────────────────────
+        #   [Gauge 972px][MAP 390px][8px gap][PiP ~693px] ≈ 2063px; main vid behind all
+        #   Below MAP+PiP: [Elev strip 948×75px]
+        #
+        #   Gauge x=0..972     y=811..1005  h=194  (overlay=0:H-h-75)
+        #   MAP   x=972..1362  y=615..1005  h=390  w=390 (square padded canvas)
+        #   PiP   x=1370..~2063 y=615..1005 h=390  w≈693 (scale=-1:390 from 2560×1440)
+        #   Elev  x=972..1920  y=1005..1080 h=75   w=948 (overlay=972:H-h)
+        _gauge_right = CFG.GAUGE_COMPOSITE_SIZE[0]              # 972
+        _map_w       = CFG.MAP_W                                # 390 (square padded canvas)
+        _map_gap     = CFG.MAP_GAP                              # 8   (gap between map and PiP)
+        _pip_w       = 1920 - _gauge_right - _map_w - _map_gap # nominal; actual ≈693 from scale=-1:PIP_H
+        _pip_x       = _gauge_right + _map_w + _map_gap         # 1370 (flush right of gap)
+        _map_x       = _gauge_right                             # 972 (flush right of gauge)
+        _panel_y     = f"H-h-{CFG.MAP_PIP_BOTTOM}"             # H-h-75 → bottom at y=1005
 
         # PiP overlay (with its own t_start!) - skip for single-camera clips
         if pip_video is not None and pip_video.exists() and t_start_pip is not None:
@@ -236,10 +258,10 @@ class ClipRenderer:
                     str(pip_video),
                 ]
             )
-            # [1:v] is pip
+            # Fixed-height scale; placed right of map
             filters.append(
-                f"[1:v]scale=iw*{CFG.PIP_SCALE_RATIO}:-1[pip];"
-                f"{current_stream}[pip]overlay=W-w-{CFG.PIP_MARGIN}:H-h-{CFG.PIP_MARGIN}[v1]"
+                f"[1:v]scale=-1:{CFG.PIP_H}[pip];"
+                f"{current_stream}[pip]overlay={_pip_x}:{_panel_y}[v1]"
             )
             current_stream = "[v1]"
         elif pip_video is None:
@@ -248,38 +270,21 @@ class ClipRenderer:
         else:
             log.warning("[clip] PiP video missing; rendering main camera only")
 
-        # Minimap overlay - positioned at top-right with margin
-        # Minimap is pre-rendered to fit within PIP width x available height
-        OVERLAY_MARGIN = CFG.MINIMAP_MARGIN
-
+        # Route-map overlay — fixed x at gauge right edge; canvas is padded square
         if minimap_path and minimap_path.exists():
             inputs.extend(["-i", str(minimap_path)])
             minimap_idx = len([a for a in inputs if a == "-i"]) - 1
-            # Position at top-right: X = W-w-margin, Y = margin
-            minimap_filter = f"[{minimap_idx}:v]overlay=W-w-{OVERLAY_MARGIN}:{OVERLAY_MARGIN}"
             filters.append(
-                f"{current_stream}{minimap_filter}[vmap]"
+                f"{current_stream}[{minimap_idx}:v]overlay={_map_x}:{_panel_y}[vmap]"
             )
             current_stream = "[vmap]"
-            log.debug(f"[clip] Minimap filter: {minimap_filter}")
 
-        # Elevation plot overlay (below minimap, same right alignment)
+        # Elevation strip — very bottom edge, spanning gauge right to frame right
         if elevation_path and elevation_path.exists() and CFG.SHOW_ELEVATION_PLOT:
             inputs.extend(["-i", str(elevation_path)])
             elev_idx = len([a for a in inputs if a == "-i"]) - 1
-            # Position: right-aligned with minimap, below it with 10px gap
-            # Get actual minimap height from file (varies by route aspect ratio)
-            minimap_height = 500  # Default fallback
-            if minimap_path and minimap_path.exists():
-                try:
-                    from PIL import Image
-                    with Image.open(minimap_path) as mm_img:
-                        minimap_height = mm_img.height
-                except Exception:
-                    pass
-            elev_y = OVERLAY_MARGIN + minimap_height + 10
             filters.append(
-                f"{current_stream}[{elev_idx}:v]overlay=W-w-{OVERLAY_MARGIN}:{elev_y}[velev]"
+                f"{current_stream}[{elev_idx}:v]overlay={_gauge_right}:H-h[velev]"
             )
             current_stream = "[velev]"
 
@@ -374,11 +379,9 @@ class ClipRenderer:
 
         cmd.extend(inputs)
 
-        if filters:
-            filter_str = ";".join(filters)
-            cmd.extend(["-filter_complex", filter_str, "-map", final_stream])
-        else:
-            cmd.extend(["-map", "0:v"])
+        # filters always contains at least the main-video scale; never empty
+        filter_str = ";".join(filters)
+        cmd.extend(["-filter_complex", filter_str, "-map", final_stream])
 
         # Select optimal video codec based on hardware and config
         if CFG.PREFERRED_CODEC == 'auto':
