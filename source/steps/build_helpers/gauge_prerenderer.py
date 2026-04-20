@@ -61,9 +61,13 @@ class GaugePrerenderer:
 
         # Load telemetry timeline for per-second lookups
         self.telemetry_timeline = self._load_telemetry_timeline() if dynamic_mode else []
+        self._telemetry_epochs = [p["epoch"] for p in self.telemetry_timeline]
 
         # Cache for static gauge backgrounds (dial, ticks, labels - no needle/value)
         self._background_cache: Dict[str, Image.Image] = {}
+
+        # Cache gauge positions — computed from constants, never changes during a build
+        self._positions = self._calculate_positions()
 
     def _load_telemetry_timeline(self) -> List[Dict]:
         """Load telemetry from flatten.csv for per-second lookups."""
@@ -105,8 +109,7 @@ class GaugePrerenderer:
 
         # Binary search for nearest point
         from bisect import bisect_left
-        epochs = [p["epoch"] for p in self.telemetry_timeline]
-        idx = bisect_left(epochs, epoch)
+        idx = bisect_left(self._telemetry_epochs, epoch)
 
         # Find closest point within 2 seconds
         best = None
@@ -302,7 +305,7 @@ class GaugePrerenderer:
     ) -> Image.Image:
         """Render composite gauge image with only available gauges."""
         canvas = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
-        positions = self._calculate_positions()
+        positions = self._positions
 
         for gauge_type in available_gauges:
             if gauge_type not in positions:
