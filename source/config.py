@@ -316,8 +316,10 @@ class Config:
     SPEED_GAUGE_SIZE: int = field(default_factory=lambda: _get_config_value('SPEED_GAUGE_SIZE', 300))
     SMALL_GAUGE_SIZE: int = field(default_factory=lambda: _get_config_value('SMALL_GAUGE_SIZE', 150))
     GAUGE_ORDER: list[str] = field(default_factory=lambda: ["cadence", "hr", "gradient", "speed", "elev"])
+    # Fallback values used only when a gauge has no data in the CSV.
+    # NOT caps — live ranges are always auto-calculated from ride data ±10%.
     GAUGE_MAXES: dict = field(default_factory=lambda: {
-        "speed": 100, "cadence": 130, "hr": 160, "elev": 99999,
+        "speed": 100, "cadence": 130, "hr": 160, "elev": 1000,
         "gradient_min": -25, "gradient_max": 25,
     })
 

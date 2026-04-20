@@ -36,7 +36,7 @@ def compute_gauge_ranges(csv_path: Path) -> Dict[str, tuple]:
     Special rules:
       - Speed and cadence: display_min floored at 0 (physically can't be negative)
       - Gradient: kept symmetric around 0 using the wider absolute bound
-      - Config GAUGE_MAXES caps are applied to display_max only
+      - All ranges are fully data-driven; no hard ceilings applied
 
     Falls back to safe defaults when a gauge has no data in the CSV.
     """
@@ -107,22 +107,7 @@ def compute_gauge_ranges(csv_path: Path) -> Dict[str, tuple]:
     abs_bound = max(abs(lo), abs(hi))
     ranges["gradient"] = (-abs_bound, abs_bound)
 
-    # Apply config caps to display_max
-    cap_map = {
-        "speed":    CFG.GAUGE_MAXES.get("speed",        INF),
-        "cadence":  CFG.GAUGE_MAXES.get("cadence",      INF),
-        "hr":       CFG.GAUGE_MAXES.get("hr",           INF),
-        "elev":     CFG.GAUGE_MAXES.get("elev",         INF),
-        "gradient": CFG.GAUGE_MAXES.get("gradient_max", INF),
-    }
-    for k, cap in cap_map.items():
-        lo, hi = ranges[k]
-        ranges[k] = (lo, min(hi, cap))
-        # Re-apply gradient symmetry if cap reduced the max
-        if k == "gradient":
-            lo, hi = ranges[k]
-            abs_bound = max(abs(lo), abs(hi))
-            ranges[k] = (-abs_bound, abs_bound)
+    # No caps — all ranges are fully data-driven with ±10% buffer
 
     return ranges
 
