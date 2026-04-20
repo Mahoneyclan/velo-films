@@ -104,6 +104,7 @@ def run() -> Path:
         "-crf", "23",                # Quality (18-28, 23 is good)
         "-profile:v", "high",        # H.264 profile
         "-level", "4.0",             # H.264 level
+        "-vf", f"scale={CFG.OUTPUT_W}:{CFG.OUTPUT_H}",  # Force output resolution
         "-pix_fmt", "yuv420p",       # Pixel format (required)
         "-r", "30",                  # Force 30 fps
         "-c:a", "aac",               # AAC audio
