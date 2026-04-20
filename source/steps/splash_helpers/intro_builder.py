@@ -18,11 +18,12 @@ from .animation_renderer import AnimationRenderer
 
 log = setup_logger("steps.splash_helpers.intro_builder")
 
-# Canvas constants
-OUT_W, OUT_H = 2560, 1440
-BANNER_HEIGHT = 220
-TITLE_FONT_SIZE = 80
-STATS_FONT_SIZE = 55
+# Canvas constants — match pipeline output resolution
+OUT_W = CFG.OUTPUT_W
+OUT_H = CFG.OUTPUT_H
+BANNER_HEIGHT = 220 * OUT_H // 1440
+TITLE_FONT_SIZE = 80 * OUT_W // 2560
+STATS_FONT_SIZE = 55 * OUT_W // 2560
 FONT_FILE = "/Library/Fonts/Arial.ttf"
 LOGO_PATH = CFG.PROJECT_ROOT / "assets" / "velo_films.png"
 
@@ -101,7 +102,7 @@ class IntroBuilder:
             LOGO_PATH,
             2.0,
             output,
-            filter_vf="scale=2560:1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2:black"
+            filter_vf=f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease,pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2:black"
         )
     
     def _build_map_canvas(self) -> Image.Image:

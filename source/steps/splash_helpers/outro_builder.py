@@ -15,9 +15,10 @@ from .video_encoder import VideoEncoder
 
 log = setup_logger("steps.splash_helpers.outro_builder")
 
-# Canvas constants
-OUT_W, OUT_H = 2560, 1440
-BANNER_HEIGHT = 220
+# Canvas constants — match pipeline output resolution
+OUT_W = CFG.OUTPUT_W
+OUT_H = CFG.OUTPUT_H
+BANNER_HEIGHT = 220 * OUT_H // 1440
 LOGO_PATH = CFG.PROJECT_ROOT / "assets" / "velo_films.png"
 FONT_FILE = "/Library/Fonts/Arial.ttf"
 
@@ -71,7 +72,7 @@ class OutroBuilder:
             LOGO_PATH,
             2.0,
             self.assets_dir / "splash_close_logo.mp4",
-            filter_vf="scale=2560:1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2:black"
+            filter_vf=f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease,pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2:black"
         )
         
         # 4. Black screen
@@ -126,7 +127,7 @@ class OutroBuilder:
         drawtext = (
             "drawtext="
             f"fontfile='{FONT_FILE}':text='{OUTRO_TITLE_TEXT}':"
-            "x=(w-text_w)/2:y=(h-text_h)/2:fontsize=160:fontcolor=white:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2:fontsize={160 * OUT_W // 2560}:fontcolor=white:"
             "bordercolor=black@0.45:borderw=6:shadowcolor=black@0.7:shadowx=4:shadowy=4:"
             f"alpha='{alpha_expr}'"
         )
