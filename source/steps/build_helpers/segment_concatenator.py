@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 from ...config import DEFAULT_CONFIG as CFG
 from ...utils.log import setup_logger
 from ...utils.progress_reporter import report_progress
+from ...utils.hardware import get_optimal_video_codec
 from ...io_paths import _mk
 
 log = setup_logger("steps.build_helpers.segment_concatenator")
@@ -327,7 +328,7 @@ class SegmentConcatenator:
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
             str(output_path)
         ])
@@ -451,7 +452,7 @@ class SegmentConcatenator:
                 "-i", str(clip),
                 "-vf", video_filter,
                 "-af", audio_filter,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE, "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
                 str(output_path)
             ]
