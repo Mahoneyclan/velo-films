@@ -327,7 +327,7 @@ class SegmentConcatenator:
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
             str(output_path)
         ])
@@ -451,7 +451,7 @@ class SegmentConcatenator:
                 "-i", str(clip),
                 "-vf", video_filter,
                 "-af", audio_filter,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
                 str(output_path)
             ]
