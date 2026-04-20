@@ -15,13 +15,15 @@ from __future__ import annotations
 import subprocess
 import random
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from ...config import DEFAULT_CONFIG as CFG
 from ...utils.log import setup_logger
 from ...utils.progress_reporter import report_progress
-from ...utils.hardware import get_optimal_video_codec
+from ...utils.hardware import get_optimal_video_codec, get_worker_count
 from ...io_paths import _mk
 
 log = setup_logger("steps.build_helpers.segment_concatenator")
@@ -57,10 +59,10 @@ class SegmentConcatenator:
         self.project_dir = project_dir
         self.working_dir = _mk(working_dir)
         self.temp_files: List[Path] = []
-        
+        self._temp_files_lock = threading.Lock()
+
         # Music tracking for continuous playback
         self.selected_music_track: Optional[Path] = None
-        self.music_offset: float = 0.0  # Current position in music track
     
     def concatenate_into_segments(
         self,
@@ -109,41 +111,59 @@ class SegmentConcatenator:
         else:
             log.warning("[segment] No music track found, creating segments without music")
         
-        # Reset music offset for new concatenation
-        self.music_offset = 0.0
-        
-        segment_paths: List[Path] = []
-
+        # Build segment groups and pre-calculate music offsets upfront.
+        # Duration per segment = N * CLIP_OUT_LEN_S - (N-1) * CROSSFADE_DURATION
+        segment_groups: List[List[Path]] = []
         for seg_idx in range(num_segments):
             start = seg_idx * highlights_per_segment
             end = min(start + highlights_per_segment, len(clips))
-            segment_clips = clips[start:end]
+            segment_groups.append(clips[start:end])
 
-            if not segment_clips:
-                continue
+        music_offsets: List[float] = []
+        cumulative = 0.0
+        for group in segment_groups:
+            music_offsets.append(cumulative)
+            n = len(group)
+            cumulative += n * CFG.CLIP_OUT_LEN_S - max(0, n - 1) * CROSSFADE_DURATION
 
-            # Report progress
-            report_progress(
-                seg_idx + 1, num_segments,
-                f"Creating segment {seg_idx + 1}/{num_segments}"
-            )
+        # Render all segments in parallel
+        max_workers = get_worker_count('ffmpeg')
+        log.info(f"[segment] Rendering {num_segments} segments with {max_workers} parallel workers...")
 
-            # Create segment with continuous music and transitions
-            is_first = (seg_idx == 0)
-            is_last = (seg_idx == num_segments - 1)
+        results: dict = {}
+        completed = 0
 
-            segment_path = self._create_segment(
-                segment_clips=segment_clips,
-                segment_num=seg_idx + 1,
-                music_volume=music_volume,
-                raw_audio_volume=raw_audio_volume,
-                is_first_segment=is_first,
-                is_last_segment=is_last
-            )
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    self._create_segment,
+                    segment_clips=group,
+                    segment_num=seg_idx + 1,
+                    music_volume=music_volume,
+                    raw_audio_volume=raw_audio_volume,
+                    is_first_segment=(seg_idx == 0),
+                    is_last_segment=(seg_idx == num_segments - 1),
+                    music_offset=music_offsets[seg_idx],
+                ): seg_idx
+                for seg_idx, group in enumerate(segment_groups) if group
+            }
 
-            if segment_path:
-                segment_paths.append(segment_path)
-                log.info(f"[segment] Segment {seg_idx + 1}/{num_segments} complete")
+            for future in as_completed(futures):
+                seg_idx = futures[future]
+                completed += 1
+                try:
+                    path = future.result()
+                    if path:
+                        results[seg_idx] = path
+                        log.info(f"[segment] Segment {seg_idx + 1}/{num_segments} complete")
+                    else:
+                        log.warning(f"[segment] Segment {seg_idx + 1}/{num_segments} failed")
+                except Exception as e:
+                    log.error(f"[segment] Segment {seg_idx + 1} error: {e}")
+
+                report_progress(completed, num_segments, f"Segments: {completed}/{num_segments}")
+
+        segment_paths = [results[i] for i in sorted(results.keys())]
         
         # Cleanup temp files
         self._cleanup_temp_files()
@@ -240,7 +260,8 @@ class SegmentConcatenator:
         music_volume: float,
         raw_audio_volume: float,
         is_first_segment: bool = False,
-        is_last_segment: bool = False
+        is_last_segment: bool = False,
+        music_offset: float = 0.0,
     ) -> Path:
         """Create single segment from clips with transitions and music overlay."""
         # Step 1: Concatenate clips with crossfade transitions
@@ -249,31 +270,29 @@ class SegmentConcatenator:
         )
         if not raw_segment:
             return None
-        
+
         # Step 2: Get segment duration
         segment_duration = self._get_video_duration(raw_segment)
         if segment_duration == 0:
             log.warning(f"[segment] Could not determine duration for segment {segment_num}")
-            segment_duration = len(segment_clips) * CFG.CLIP_OUT_LEN_S  # Fallback estimate
-        
-        # Step 3: Add continuous music overlay
+            segment_duration = len(segment_clips) * CFG.CLIP_OUT_LEN_S
+
+        # Step 3: Add continuous music overlay using pre-calculated offset
         final_segment = self._add_continuous_music(
             video_path=raw_segment,
             segment_num=segment_num,
             segment_duration=segment_duration,
             music_volume=music_volume,
-            raw_audio_volume=raw_audio_volume
+            raw_audio_volume=raw_audio_volume,
+            music_offset=music_offset,
         )
-        
-        # Step 4: Update music offset for next segment
-        self.music_offset += segment_duration
-        
+
         # Cleanup raw segment (temp file)
         try:
             raw_segment.unlink()
         except Exception as e:
             log.debug(f"[segment] Could not delete temp file {raw_segment.name}: {e}")
-        
+
         return final_segment
     
     def _concatenate_clips_with_transitions(
@@ -314,7 +333,8 @@ class SegmentConcatenator:
 
         # Build FFmpeg command with all inputs
         output_path = self.project_dir / f"_middle_raw_{segment_num:02d}.mp4"
-        self.temp_files.append(output_path)
+        with self._temp_files_lock:
+            self.temp_files.append(output_path)
 
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
 
@@ -428,7 +448,8 @@ class SegmentConcatenator:
     ) -> Path:
         """Process a single clip with optional fade in/out."""
         output_path = self.project_dir / f"_middle_raw_{segment_num:02d}.mp4"
-        self.temp_files.append(output_path)
+        with self._temp_files_lock:
+            self.temp_files.append(output_path)
 
         duration = self._get_video_duration(clip) or CFG.CLIP_OUT_LEN_S
 
@@ -480,10 +501,12 @@ class SegmentConcatenator:
             for clip in clips:
                 f.write(f"file '{clip.resolve()}'\n")
 
-        self.temp_files.append(concat_list)
+        with self._temp_files_lock:
+            self.temp_files.append(concat_list)
 
         output_path = self.project_dir / f"_middle_raw_{segment_num:02d}.mp4"
-        self.temp_files.append(output_path)
+        with self._temp_files_lock:
+            self.temp_files.append(output_path)
 
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -506,7 +529,8 @@ class SegmentConcatenator:
         segment_num: int,
         segment_duration: float,
         music_volume: float,
-        raw_audio_volume: float
+        raw_audio_volume: float,
+        music_offset: float = 0.0,
     ) -> Path:
         """
         Add music overlay using continuous playback (no restart between segments).
@@ -531,7 +555,7 @@ class SegmentConcatenator:
             return self._copy_without_music(video_path, output_path)
         
         # Calculate music seek position and duration
-        music_start = self.music_offset
+        music_start = music_offset
         music_duration = segment_duration
         
         log.info(
