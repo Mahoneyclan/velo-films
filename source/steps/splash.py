@@ -24,8 +24,9 @@ from .splash_helpers import (
 log = setup_logger("steps.splash")
 
 # Canvas constants
-OUT_W, OUT_H = 2560, 1440
-BANNER_HEIGHT = 220
+OUT_W = CFG.OUTPUT_W
+OUT_H = CFG.OUTPUT_H
+BANNER_HEIGHT = 220 * OUT_H // 1440
 
 # Track temp files for cleanup
 _temp_files: List[Path] = []
