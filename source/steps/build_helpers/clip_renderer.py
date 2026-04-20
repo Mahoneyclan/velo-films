@@ -126,8 +126,7 @@ class ClipRenderer:
             log.error(f"[clip] FFmpeg failed for clip {clip_idx}: {e}")
             return None
 
-        # Mux audio from main camera
-        return self._mux_audio(output_path, main_video, t_start_main, duration, clip_idx)
+        return output_path
 
     # -------------------------------------------------------------------------
     # Internal helpers
@@ -380,8 +379,8 @@ class ClipRenderer:
         cmd.extend(inputs)
 
         # filters always contains at least the main-video scale; never empty
-        filter_str = ";".join(filters)
-        cmd.extend(["-filter_complex", filter_str, "-map", final_stream])
+        filter_str = ";".join(filters) + ";[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[anorm]"
+        cmd.extend(["-filter_complex", filter_str, "-map", final_stream, "-map", "[anorm]"])
 
         # Select optimal video codec based on hardware and config
         if CFG.PREFERRED_CODEC == 'auto':
@@ -401,6 +400,7 @@ class ClipRenderer:
                 CFG.BUFSIZE,
                 "-pix_fmt",
                 "yuv420p",
+                "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE, "-ac", "2",
                 str(output_path),
             ]
         )
