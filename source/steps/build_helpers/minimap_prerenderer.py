@@ -34,34 +34,13 @@ class MinimapPrerenderer:
         self.output_dir = _mk(output_dir)
         self.gpx_points = gpx_points
 
-        # Calculate minimap size constraints to maximize available space
-        # Layout (top-right corner, top to bottom):
-        #   - top margin
-        #   - minimap
-        #   - gap
-        #   - elevation plot
-        #   - gap
-        #   - PIP video
-        #   - bottom margin
-        # Use MAP_SPLASH_SIZE as reference for output video dimensions
-        video_width, video_height = CFG.MAP_SPLASH_SIZE
-        pip_width = int(video_width * CFG.PIP_SCALE_RATIO)
-        pip_height = int(video_height * CFG.PIP_SCALE_RATIO)
-        elev_height = int(pip_width * 0.25)  # Elevation is 25% of pip width
-        top_margin = CFG.MINIMAP_MARGIN
-        bottom_margin = CFG.PIP_MARGIN
-        gap_minimap_elev = 10  # Gap between minimap and elevation
-        gap_elev_pip = 10  # Gap between elevation and PIP
+        # Map canvas is a fixed square (MAP_W × MAP_W).
+        # render_overlay_minimap produces an image that fits within the square
+        # while maintaining route aspect ratio; we pad with transparency to
+        # exactly MAP_W × MAP_W so the FFmpeg overlay x position is always fixed.
+        self.map_w = CFG.MAP_W          # 390 — square canvas dimension
 
-        self.max_width = pip_width  # Same as PIP width
-
-        # Max height: total available vertical space minus all other elements
-        available_height = (video_height - top_margin - bottom_margin
-                           - pip_height - elev_height
-                           - gap_minimap_elev - gap_elev_pip)
-        self.max_height = max(available_height, 200)  # Minimum 200px
-
-        log.info(f"[minimap] Video: {video_width}x{video_height}, PIP: {pip_width}x{pip_height}, max minimap: {self.max_width}x{self.max_height}px")
+        log.info(f"[minimap] Minimap canvas size: {self.map_w}x{self.map_w}px (square)")
     
     def prerender_all(self, rows: List[Dict]) -> Dict[int, Path]:
         """
@@ -129,11 +108,26 @@ class MinimapPrerenderer:
             img = render_overlay_minimap(
                 self.gpx_points,
                 epoch,
-                size=(self.max_width, self.max_height)
+                size=(self.map_w, self.map_w)
             )
 
+            # Fit map within square, preserving aspect ratio, then pad with
+            # transparency to EXACT map_w × map_w. This guarantees h = MAP_W
+            # in the FFmpeg overlay, matching PiP height (scale=-1:PIP_H = MAP_W).
+            from PIL import Image as PILImage
+            # Scale to fit within map_w × map_w
+            scale = min(self.map_w / img.width, self.map_w / img.height)
+            fit_w = round(img.width * scale)
+            fit_h = round(img.height * scale)
+            img_fit = img.resize((fit_w, fit_h), PILImage.LANCZOS)
+            # Centre on transparent square canvas
+            canvas = PILImage.new("RGBA", (self.map_w, self.map_w), (0, 0, 0, 0))
+            x_off = (self.map_w - fit_w) // 2
+            y_off = (self.map_w - fit_h) // 2
+            canvas.paste(img_fit, (x_off, y_off))
+
             minimap_path = self.output_dir / f"minimap_{clip_idx:04d}.png"
-            img.save(minimap_path)
+            canvas.save(minimap_path)
 
             return minimap_path
 

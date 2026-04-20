@@ -92,7 +92,7 @@ ffprobe -version
 ## Project Structure
 
 ```
-  ai_reel_generator_for_cycliq/
+  ai_reel_generator_green_overlay/
   ├── source/                 # Main application code
   ├── assets/                 # Static media (music, logos)
   ├── py_txt/                 # Auto-generated source code exports
@@ -209,8 +209,11 @@ SCORE_WEIGHTS = {
 
 #### 5. **Build** - Video Composition
 ```bash
-# Extracts selected clips from source videos
-# Applies PiP compositing (main view + secondary)
+# Scales source footage (2560×1440) to 1920×1080 output
+# Applies PiP compositing (front camera full-frame + rear camera overlay)
+# Composites gauge strip (972px, 5×194px cells), route minimap (390×390px),
+#   PiP overlay (≈693×390px), and elevation strip (948×75px) across bottom of frame
+# Gauge order left→right: Elevation, Gradient, Speed, HR, Cadence
 # Outputs: Individual clip files in clips/
 ```
 
@@ -238,12 +241,12 @@ SCORE_WEIGHTS = {
 EXTRACT_INTERVAL_SECONDS = 5  # Frame sampling rate
 
 # Target duration
-HIGHLIGHT_TARGET_DURATION_M = 3.0  # 3-minute highlights
+HIGHLIGHT_TARGET_DURATION_M = 5.0  # 5-minute highlights
 
 # Clip timing
-CLIP_PRE_ROLL_S = 0.2   # Lead-in before scored moment
-CLIP_OUT_LEN_S = 2.8    # Total clip length
-MIN_GAP_BETWEEN_CLIPS = 45.0  # Avoid repetitive clips
+CLIP_PRE_ROLL_S = 0.5   # Lead-in before scored moment
+CLIP_OUT_LEN_S = 3.5    # Total clip length
+MIN_GAP_BETWEEN_CLIPS = 10.0  # Avoid repetitive clips
 
 # YOLO detection
 YOLO_DETECT_CLASSES = [1]  # 1 = bicycle

@@ -25,103 +25,159 @@ from .draw_gauge import (
 SPEED_GAUGE_SIZE = 300  # Default, actual value from CFG.SPEED_GAUGE_SIZE
 SMALL_GAUGE_SIZE = 150  # Default, actual value from CFG.SMALL_GAUGE_SIZE
 
-def compute_gauge_maxes(csv_path: Path) -> Dict[str, float]:
-    """Compute maximum values for gauge scaling from CSV data."""
-    maxes = {"speed": 0.0, "cadence": 0.0, "hr": 0.0, "elev": 0.0, "gradient": 0.0}
-    
+def compute_gauge_ranges(csv_path: Path) -> Dict[str, tuple]:
+    """
+    Compute (display_min, display_max) for each gauge from ride data.
+
+    Scans the CSV for actual data range per gauge, then applies a ±10% buffer:
+      display_min = data_min × 0.9  (× 1.1 if data_min is negative, to widen the range)
+      display_max = data_max × 1.1
+
+    Special rules:
+      - Speed and cadence: display_min floored at 0 (physically can't be negative)
+      - Gradient: kept symmetric around 0 using the wider absolute bound
+      - Config GAUGE_MAXES caps are applied to display_max only
+
+    Falls back to safe defaults when a gauge has no data in the CSV.
+    """
+    import math
+
+    INF = float("inf")
+    field_map = {
+        "speed":    "speed_kmh",
+        "cadence":  "cadence_rpm",
+        "hr":       "hr_bpm",
+        "elev":     "elevation",
+        "gradient": "gradient_pct",
+    }
+    raw_min = {k: INF  for k in field_map}
+    raw_max = {k: -INF for k in field_map}
+    has_data = {k: False for k in field_map}
+
     try:
         with csv_path.open() as f:
             for r in csv.DictReader(f):
-                try:
-                    s = float(r.get("speed_kmh") or 0.0)
-                    c = float(r.get("cadence_rpm") or 0.0)
-                    h = float(r.get("hr_bpm") or 0.0)
-                    e = float(r.get("elevation") or 0.0)
-                    g = float(r.get("gradient_pct") or 0.0)
-                except Exception:
-                    continue
-                
-                if s > maxes["speed"]:
-                    maxes["speed"] = s
-                if c > maxes["cadence"]:
-                    maxes["cadence"] = c
-                if h > maxes["hr"]:
-                    maxes["hr"] = h
-                if e > maxes["elev"]:
-                    maxes["elev"] = e
-                if abs(g) > maxes["gradient"]:
-                    maxes["gradient"] = abs(g)
-
-        import math
-        def round_up(x: float, step: float) -> float:
-            if x <= 0:
-                return step
-            return math.ceil(x / step) * step
-
-        maxes["speed"] = round_up(maxes["speed"], 10.0)
-        maxes["cadence"] = round_up(maxes["cadence"], 10.0)
-        maxes["hr"] = round_up(maxes["hr"], 10.0)
-        maxes["elev"] = round_up(maxes["elev"], 50.0)
-        maxes["gradient"] = round_up(maxes["gradient"], 2.0)
-
+                for gauge_type, field in field_map.items():
+                    raw = r.get(field, "")
+                    if raw and raw.strip():
+                        try:
+                            v = float(raw)
+                            has_data[gauge_type] = True
+                            if v < raw_min[gauge_type]:
+                                raw_min[gauge_type] = v
+                            if v > raw_max[gauge_type]:
+                                raw_max[gauge_type] = v
+                        except ValueError:
+                            pass
     except Exception:
-        # Fallback defaults
-        maxes = {"speed": 60.0, "cadence": 120.0, "hr": 190.0, "elev": 300.0, "gradient": 15.0}
+        pass
 
-    # Apply config caps
-    capped = {}
-    capped["speed"] = min(maxes["speed"], CFG.GAUGE_MAXES.get("speed", maxes["speed"]))
-    capped["cadence"] = min(maxes["cadence"], CFG.GAUGE_MAXES.get("cadence", maxes["cadence"]))
-    capped["hr"] = min(maxes["hr"], CFG.GAUGE_MAXES.get("hr", maxes["hr"]))
-    capped["elev"] = min(maxes["elev"], CFG.GAUGE_MAXES.get("elev", maxes["elev"]))
-    capped["gradient"] = min(maxes["gradient"], CFG.GAUGE_MAXES.get("gradient_max", maxes["gradient"]))
-    
-    return capped
+    # Fallback defaults when no data found for a gauge — read from config caps
+    _gcap = CFG.GAUGE_MAXES
+    defaults = {
+        "speed":    (0.0,  float(_gcap.get("speed",    60))),
+        "cadence":  (0.0,  float(_gcap.get("cadence",  120))),
+        "hr":       (40.0, float(_gcap.get("hr",        160))),
+        "elev":     (0.0,  float(_gcap.get("elev",     5000))),
+        "gradient": (-float(_gcap.get("gradient_max", 10)), float(_gcap.get("gradient_max", 10))),
+    }
+
+    ranges: Dict[str, tuple] = {}
+    for k in field_map:
+        if not has_data[k] or raw_max[k] == -INF:
+            ranges[k] = defaults[k]
+            continue
+
+        data_min = raw_min[k]
+        data_max = raw_max[k]
+
+        # ±10% buffer — widen toward the extreme on each end
+        display_min = data_min * 0.9 if data_min >= 0 else data_min * 1.1
+        display_max = data_max * 1.1 if data_max >= 0 else data_max * 0.9
+
+        ranges[k] = (display_min, display_max)
+
+    # Speed and cadence: floor min at 0
+    for k in ("speed", "cadence"):
+        lo, hi = ranges[k]
+        ranges[k] = (max(0.0, lo), hi)
+
+    # Gradient: symmetric around 0 using the wider absolute bound
+    lo, hi = ranges["gradient"]
+    abs_bound = max(abs(lo), abs(hi))
+    ranges["gradient"] = (-abs_bound, abs_bound)
+
+    # Apply config caps to display_max
+    cap_map = {
+        "speed":    CFG.GAUGE_MAXES.get("speed",        INF),
+        "cadence":  CFG.GAUGE_MAXES.get("cadence",      INF),
+        "hr":       CFG.GAUGE_MAXES.get("hr",           INF),
+        "elev":     CFG.GAUGE_MAXES.get("elev",         INF),
+        "gradient": CFG.GAUGE_MAXES.get("gradient_max", INF),
+    }
+    for k, cap in cap_map.items():
+        lo, hi = ranges[k]
+        ranges[k] = (lo, min(hi, cap))
+        # Re-apply gradient symmetry if cap reduced the max
+        if k == "gradient":
+            lo, hi = ranges[k]
+            abs_bound = max(abs(lo), abs(hi))
+            ranges[k] = (-abs_bound, abs_bound)
+
+    return ranges
 
 def create_all_gauge_images(
     telemetry: Dict[str, List[float]],
-    gauge_maxes: Dict[str, float],
+    gauge_ranges: Dict[str, tuple],
     base_dir: Path,
     clip_idx: int,
 ) -> Dict[str, Path]:
     """
     Create gauge images for all telemetry types and return dict of paths.
     base_dir is a per-clip folder under GAUGE_DIR, created by build.py.
+    gauge_ranges: dict of gauge_type -> (display_min, display_max) from compute_gauge_ranges().
     """
     out: Dict[str, Path] = {}
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use config values for gauge sizes
     speed_size = CFG.SPEED_GAUGE_SIZE
     small_size = CFG.SMALL_GAUGE_SIZE
+
+    _gcap = CFG.GAUGE_MAXES
+    _defaults = {
+        "speed":    (0.0,  float(_gcap.get("speed",    60))),
+        "cadence":  (0.0,  float(_gcap.get("cadence",  120))),
+        "hr":       (40.0, float(_gcap.get("hr",        160))),
+        "elev":     (0.0,  float(_gcap.get("elev",     5000))),
+        "gradient": (-float(_gcap.get("gradient_max", 10)), float(_gcap.get("gradient_max", 10))),
+    }
 
     for gtype, values in telemetry.items():
         if not values:
             continue
         val = float(values[0] or 0.0)
-        max_val = gauge_maxes.get(gtype, None)
+        lo, hi = gauge_ranges.get(gtype, _defaults.get(gtype, (0.0, 100.0)))
 
         if gtype == "speed":
             size = speed_size
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw_speed_gauge(img, (0, 0, size, size), val, float(max_val or 60))
+            draw_speed_gauge(img, (0, 0, size, size), val, lo, hi)
         elif gtype == "cadence":
             size = small_size
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw_cadence_gauge(img, (0, 0, size, size), val, float(max_val or 120))
+            draw_cadence_gauge(img, (0, 0, size, size), val, lo, hi)
         elif gtype == "hr":
             size = small_size
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw_hr_gauge(img, (0, 0, size, size), val, float(max_val or 180))
+            draw_hr_gauge(img, (0, 0, size, size), val, lo, hi)
         elif gtype == "elev":
             size = small_size
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw_elev_gauge(img, (0, 0, size, size), val, float(max_val or 1000))
+            draw_elev_gauge(img, (0, 0, size, size), val, lo, hi)
         elif gtype == "gradient":
             size = small_size
             img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw_gradient_gauge(img, (0, 0, size, size), val,
-                                -float(max_val or 10), float(max_val or 10))
+            draw_gradient_gauge(img, (0, 0, size, size), val, lo, hi)
         else:
             continue
 

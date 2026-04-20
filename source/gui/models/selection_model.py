@@ -21,29 +21,35 @@ log = setup_logger("gui.models.selection_model")
 @dataclass
 class Moment:
     """
-    A moment in time with two camera perspectives.
+    A moment in time with up to two camera perspectives.
 
     Each moment has:
     - moment_id: Unique identifier from select step
-    - epoch: Aligned world time (earliest of both cameras)
-    - rows: [front_camera_row, rear_camera_row] as dicts from CSV
+    - epoch: Aligned world time (earliest of available cameras)
+    - rows: Always a 2-element list [front_row_or_None, rear_row_or_None].
+            Either element may be None for single-camera moments.
     """
     moment_id: int
     epoch: float
-    rows: List[Dict] = field(default_factory=list)
+    rows: List[Optional[Dict]] = field(default_factory=list)
 
     @property
     def front_row(self) -> Optional[Dict]:
-        """Get front camera row (index 0)."""
+        """Get front camera row (index 0), or None if unavailable."""
         return self.rows[0] if len(self.rows) > 0 else None
 
     @property
     def rear_row(self) -> Optional[Dict]:
-        """Get rear camera row (index 1)."""
+        """Get rear camera row (index 1), or None if unavailable."""
         return self.rows[1] if len(self.rows) > 1 else None
 
+    @property
+    def is_single_camera(self) -> bool:
+        """True if only one camera perspective is available for this moment."""
+        return self.rows[0] is None or self.rows[1] is None
+
     def get_row(self, primary_idx: int) -> Optional[Dict]:
-        """Get row by primary index (0=front, 1=rear)."""
+        """Get row by primary index (0=front, 1=rear). Returns None if not available."""
         if 0 <= primary_idx < len(self.rows):
             return self.rows[primary_idx]
         return None
@@ -55,7 +61,7 @@ class Moment:
 
     def has_any_selected(self) -> bool:
         """Check if any perspective is selected."""
-        return any(r.get("recommended") == "true" for r in self.rows)
+        return any(r is not None and r.get("recommended") == "true" for r in self.rows)
 
 
 class MomentSelectionModel:
@@ -152,6 +158,7 @@ class MomentSelectionModel:
             # Build moment objects
             registry = get_registry()
             dropped = 0
+            single_camera_count = 0
 
             for mid, group in by_moment.items():
                 front_row: Optional[Dict] = None
@@ -164,15 +171,23 @@ class MomentSelectionModel:
                     elif registry.is_rear_camera(cam):
                         rear_row = r
 
-                if not front_row or not rear_row:
+                # Require at least one camera perspective
+                if not front_row and not rear_row:
                     dropped += 1
                     continue
 
-                # Use earliest aligned world time
-                epoch = min(
-                    float(front_row.get("abs_time_epoch", 0) or 0.0),
-                    float(rear_row.get("abs_time_epoch", 0) or 0.0),
-                )
+                # Use earliest available aligned world time
+                epochs = []
+                if front_row:
+                    epochs.append(float(front_row.get("abs_time_epoch", 0) or 0.0))
+                if rear_row:
+                    epochs.append(float(rear_row.get("abs_time_epoch", 0) or 0.0))
+                epoch = min(epochs)
+
+                # rows is always [front_or_None, rear_or_None] — position encodes camera identity
+                is_single = front_row is None or rear_row is None
+                if is_single:
+                    single_camera_count += 1
 
                 self._moments.append(Moment(
                     moment_id=int(mid),
@@ -183,9 +198,11 @@ class MomentSelectionModel:
             # Sort by time
             self._moments.sort(key=lambda m: m.epoch)
 
+            dual_count = len(self._moments) - single_camera_count
             log.info(
-                f"[model] Created {len(self._moments)} moments, "
-                f"dropped {dropped} incomplete, "
+                f"[model] Created {len(self._moments)} moments "
+                f"({dual_count} dual-camera, {single_camera_count} single-camera), "
+                f"dropped {dropped} with no camera data, "
                 f"{self.selected_count} pre-selected"
             )
 
@@ -209,7 +226,7 @@ class MomentSelectionModel:
         """
         all_rows: List[Dict] = []
         for moment in self._moments:
-            all_rows.extend(moment.rows)
+            all_rows.extend(r for r in moment.rows if r is not None)
 
         if not all_rows:
             # Write minimal header for empty case

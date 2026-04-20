@@ -311,8 +311,20 @@ def run() -> Path:
     gpx_start_epoch, gpx_end_epoch = _get_gpx_time_range()
     sampling_interval_s = int(CFG.EXTRACT_INTERVAL_SECONDS)
 
-    # Extend grid before/after GPX to capture pre/post ride footage
-    grid_extension_s = CFG.GPX_GRID_EXTENSION_M * 60.0  # Convert minutes to seconds
+    # Extend grid before/after GPX to capture pre/post ride footage.
+    # Check project_config.json for a per-project override; fall back to global CFG.
+    grid_extension_m = CFG.GPX_GRID_EXTENSION_M
+    try:
+        import json as _json
+        _proj_cfg_path = CFG.PROJECT_DIR / "project_config.json"
+        if _proj_cfg_path.exists():
+            _proj_cfg = _json.loads(_proj_cfg_path.read_text())
+            if "GPX_GRID_EXTENSION_M" in _proj_cfg:
+                grid_extension_m = float(_proj_cfg["GPX_GRID_EXTENSION_M"])
+                log.info(f"[extract]   GPX grid extension overridden by project_config.json: {grid_extension_m:.0f} min")
+    except Exception as _e:
+        log.warning(f"[extract]   Could not read project_config.json for grid extension: {_e}")
+    grid_extension_s = grid_extension_m * 60.0
 
     if gpx_start_epoch > 0 and gpx_end_epoch > 0:
         gpx_start_dt = datetime.fromtimestamp(gpx_start_epoch, tz=timezone.utc)
@@ -326,7 +338,7 @@ def run() -> Path:
         log.info(f"[extract] GPX timeline: {duration_min:.1f} min")
         log.info(f"[extract]   GPX start: {gpx_start_dt.isoformat()}")
         log.info(f"[extract]   GPX end:   {gpx_end_dt.isoformat()}")
-        log.info(f"[extract]   Grid extended: +/- {CFG.GPX_GRID_EXTENSION_M:.0f} min")
+        log.info(f"[extract]   Grid extended: +/- {grid_extension_m:.0f} min")
         log.info(f"[extract]   Grid interval: {sampling_interval_s}s")
     else:
         log.error("[extract] No GPX data - cannot create timeline grid")

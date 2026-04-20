@@ -28,7 +28,7 @@ from ...utils.draw_gauge import (
     draw_elev_gauge,
     draw_gradient_gauge,
 )
-from ...utils.gauge_overlay import compute_gauge_maxes
+from ...utils.gauge_overlay import compute_gauge_ranges
 from ...io_paths import _mk, select_path, flatten_path
 from ...utils.progress_reporter import report_progress
 
@@ -48,7 +48,7 @@ class GaugePrerenderer:
             dynamic_mode: If True, render per-second gauge videos; if False, static PNGs
         """
         self.output_dir = _mk(output_dir)
-        self.gauge_maxes = compute_gauge_maxes(select_path())
+        self.gauge_ranges = compute_gauge_ranges(select_path())
         self.dynamic_mode = dynamic_mode
 
         # Composite canvas size (matches PIP)
@@ -310,23 +310,22 @@ class GaugePrerenderer:
 
             x, y, size = positions[gauge_type]
             value = telemetry.get(gauge_type, 0.0)
-            max_val = self.gauge_maxes.get(gauge_type, 100.0)
+            lo, hi = self.gauge_ranges.get(gauge_type, (0.0, 100.0))
 
             # Create gauge image
             gauge_img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
             rect = (0, 0, size, size)
 
             if gauge_type == "speed":
-                draw_speed_gauge(gauge_img, rect, value, max_val)
+                draw_speed_gauge(gauge_img, rect, value, lo, hi)
             elif gauge_type == "cadence":
-                draw_cadence_gauge(gauge_img, rect, value, max_val)
+                draw_cadence_gauge(gauge_img, rect, value, lo, hi)
             elif gauge_type == "hr":
-                draw_hr_gauge(gauge_img, rect, value, max_val)
+                draw_hr_gauge(gauge_img, rect, value, lo, hi)
             elif gauge_type == "elev":
-                draw_elev_gauge(gauge_img, rect, value, max_val)
+                draw_elev_gauge(gauge_img, rect, value, lo, hi)
             elif gauge_type == "gradient":
-                min_val = -self.gauge_maxes.get("gradient", 10.0)
-                draw_gradient_gauge(gauge_img, rect, value, min_val, max_val)
+                draw_gradient_gauge(gauge_img, rect, value, lo, hi)
 
             canvas.paste(gauge_img, (x, y), gauge_img)
 
@@ -385,15 +384,10 @@ class GaugePrerenderer:
         small_size = min(CFG.SMALL_GAUGE_SIZE, (h - 20) // 2)
 
         if self.layout == "strip":
-            gauge_size = min(w // 5 - 10, h - 20)
-            spacing = (w - gauge_size * 5) // 6
-            return {
-                "hr": (spacing, (h - gauge_size) // 2, gauge_size),
-                "cadence": (spacing * 2 + gauge_size, (h - gauge_size) // 2, gauge_size),
-                "speed": (spacing * 3 + gauge_size * 2, (h - gauge_size) // 2, gauge_size),
-                "elev": (spacing * 4 + gauge_size * 3, (h - gauge_size) // 2, gauge_size),
-                "gradient": (spacing * 5 + gauge_size * 4, (h - gauge_size) // 2, gauge_size),
-            }
+            # Five equal cells across composite width. Order left→right: Elev, Gradient, Speed, HR, Cadence.
+            cell_w = w // 5   # 972 // 5 = 194
+            order = ["elev", "gradient", "speed", "hr", "cadence"]
+            return {name: (i * cell_w, 0, cell_w) for i, name in enumerate(order)}
 
         # Default: cluster layout
         speed_x = (w - speed_size) // 2
