@@ -120,10 +120,11 @@ class MinimapPrerenderer:
             fit_w = round(img.width * scale)
             fit_h = round(img.height * scale)
             img_fit = img.resize((fit_w, fit_h), PILImage.LANCZOS)
-            # Centre on transparent square canvas
+            # Bottom-align on transparent square canvas so map bottom edge
+            # aligns with the PiP and gauge strip bottom edge.
             canvas = PILImage.new("RGBA", (self.map_w, self.map_w), (0, 0, 0, 0))
             x_off = (self.map_w - fit_w) // 2
-            y_off = (self.map_w - fit_h) // 2
+            y_off = self.map_w - fit_h
             canvas.paste(img_fit, (x_off, y_off))
 
             minimap_path = self.output_dir / f"minimap_{clip_idx:04d}.png"
