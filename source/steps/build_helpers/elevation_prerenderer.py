@@ -30,10 +30,8 @@ class ElevationPrerenderer:
         self.output_dir = _mk(output_dir)
         self.elevation_data = load_elevation_data(flatten_path())
 
-        # Elevation strip spans from the last gauge's right edge to the frame edge.
-        # Anchored at x=GAUGE_COMPOSITE_SIZE[0] so it always covers the map+PiP area
-        # regardless of the map's variable width.
-        self.width  = 1920 - CFG.GAUGE_COMPOSITE_SIZE[0]   # 1920 - 1080 = 840
+        # Elevation strip fills the space to the right of the gauge composite.
+        self.width  = CFG.OUTPUT_W - CFG.GAUGE_COMPOSITE_SIZE[0]
         self.height = CFG.ELEV_STRIP_H                      # 75 px
 
     def prerender_all(self, rows: List[Dict]) -> Dict[int, Path]:

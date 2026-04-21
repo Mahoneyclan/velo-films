@@ -2,6 +2,7 @@
 """
 Flip animation renderer for splash intro sequence.
 Creates smooth tile-flip transitions from map to collage.
+Uses hardware-accelerated encoding (VideoToolbox on Apple Silicon) via get_optimal_video_codec().
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from PIL import Image
 
 from ...utils.log import setup_logger
 from ...config import DEFAULT_CONFIG as CFG
+from ...utils.hardware import get_optimal_video_codec
 
 log = setup_logger("steps.splash_helpers.animation_renderer")
 
@@ -213,8 +215,6 @@ class AnimationRenderer:
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             executor.map(save_frame, enumerate(frames))
         
-        # Encode with FFmpeg (hardware accelerated if available)
-        video_codec = "h264_videotoolbox" if CFG.FFMPEG_HWACCEL == "videotoolbox" else "libx264"
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-framerate", str(self.fps),
@@ -222,7 +222,7 @@ class AnimationRenderer:
             "-f", "lavfi", "-i", f"anullsrc=channel_layout=stereo:sample_rate=48000",
             "-shortest",
             "-map", "0:v", "-map", "1:a",
-            "-c:v", video_codec, "-b:v", "8M", "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", "48000", "-ac", "2",
             str(output_path)
         ]

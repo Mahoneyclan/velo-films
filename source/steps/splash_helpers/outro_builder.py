@@ -1,6 +1,7 @@
 # source/steps/splash_helpers/outro_builder.py
 """
 Outro sequence builder: collage → text → logo → black.
+Uses hardware-accelerated encoding (VideoToolbox on Apple Silicon) via get_optimal_video_codec().
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from PIL import Image
 
 from ...config import DEFAULT_CONFIG as CFG
 from ...utils.log import setup_logger
+from ...utils.hardware import get_optimal_video_codec
 from .collage_builder import CollageBuilder
 from .video_encoder import VideoEncoder
 
@@ -149,7 +151,7 @@ class OutroBuilder:
             "-shortest",
             "-vf", vf,
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-b:v", "8M", "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", "48000", "-ac", "2",
             str(output)
         ]

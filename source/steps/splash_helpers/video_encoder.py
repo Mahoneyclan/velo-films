@@ -2,6 +2,7 @@
 """
 FFmpeg video encoding utilities for splash sequences.
 Handles clip creation, music overlay, and concatenation.
+Uses hardware-accelerated encoding (VideoToolbox on Apple Silicon) via get_optimal_video_codec().
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from typing import List
 
 from ...config import DEFAULT_CONFIG as CFG
 from ...utils.log import setup_logger
+from ...utils.hardware import get_optimal_video_codec
 
 log = setup_logger("steps.splash_helpers.video_encoder")
 
@@ -62,11 +64,11 @@ class VideoEncoder:
         
         cmd.extend([
             "-map", "0:v", "-map", "1:a",
-            "-c:v", CFG.VIDEO_CODEC, "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE, "-ac", "2",
             str(output_path)
         ])
-        
+
         log.debug(f"[encoder] Creating clip: {output_path.name} ({duration:.2f}s)")
         subprocess.run(cmd, check=True)
         return output_path
@@ -97,11 +99,11 @@ class VideoEncoder:
             "-f", "lavfi", "-i", f"color=c={color}:s={size[0]}x{size[1]}:d={duration}",
             "-f", "lavfi", "-i", f"anullsrc=channel_layout=stereo:sample_rate={AUDIO_SAMPLE_RATE}",
             "-shortest",
-            "-c:v", CFG.VIDEO_CODEC, "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE, "-ac", "2",
             str(output_path)
         ]
-        
+
         log.debug(f"[encoder] Creating color clip: {output_path.name}")
         subprocess.run(cmd, check=True)
         return output_path
