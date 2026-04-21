@@ -3,14 +3,14 @@
 Concatenate _intro.mp4, all _middle_##.mp4 segments, and _outro.mp4 into final reel.
 Output filename is derived from ride folder name.
 
-MODIFIED: Uses stream copy (fast!) since all inputs are already 1080p.
+Uses stream copy — all inputs are 1920×1080 H.264 yuv420p limited-range (color_range=1),
+so no re-encode is needed. The final concat is near-instant.
 """
 
 from __future__ import annotations
 from pathlib import Path
 import subprocess
 import re
-import time
 
 from ..config import DEFAULT_CONFIG as CFG
 from ..io_paths import clips_dir
@@ -32,14 +32,6 @@ def _get_total_duration(parts: list[Path]) -> float:
         except Exception:
             pass
     return total
-
-
-def _format_eta(seconds: float) -> str:
-    """Format seconds as human-readable ETA string."""
-    if seconds >= 60:
-        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-    else:
-        return f"{int(seconds)}s"
 
 
 def run() -> Path:
@@ -88,98 +80,32 @@ def run() -> Path:
         for part in final_parts:
             f.write(f"file '{part.resolve()}'\n")
 
-    # Step 2: Concatenate and re-encode for Facebook compatibility
+    # Step 2: Stream-copy concat — all inputs are 1920×1080 H.264 yuv420p limited-range,
+    # so no re-encode is needed. This completes in seconds regardless of reel length.
     total_duration = _get_total_duration(final_parts)
-    log.info(f"[concat] Concatenating {len(final_parts)} parts ({total_duration:.1f}s total) with Facebook-compliant encoding...")
+    log.info(f"[concat] Stream-copying {len(final_parts)} parts ({total_duration:.1f}s total)...")
 
-    start_time = time.time()
-
-    # Run FFmpeg with progress output
     cmd = [
-        "ffmpeg", "-hide_banner", "-y",
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_list),
-        # Re-encode to ensure Facebook compatibility
-        "-c:v", "libx264",           # H.264 codec
-        "-preset", "medium",         # Encoding speed
-        "-crf", "23",                # Quality (18-28, 23 is good)
-        "-profile:v", "high",        # H.264 profile
-        "-level", "4.0",             # H.264 level
-        "-vf", f"scale={CFG.OUTPUT_W}:{CFG.OUTPUT_H}",  # Force output resolution
-        "-pix_fmt", "yuv420p",       # Pixel format (required)
-        "-r", "30",                  # Force 30 fps
-        "-c:a", "aac",               # AAC audio
-        "-b:a", "128k",              # Audio bitrate
-        "-ar", "48000",              # Audio sample rate
-        "-progress", "pipe:1",       # Output progress to stdout
-        "-loglevel", "error",
+        "-c", "copy",
+        "-movflags", "+faststart",
         str(out)
     ]
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    last_report_time = 0
-    current_time_s = 0.0
-
-    # Parse progress output
-    for line in process.stdout:
-        line = line.strip()
-        if line.startswith("out_time_ms="):
-            try:
-                out_time_ms = int(line.split("=")[1])
-                current_time_s = out_time_ms / 1_000_000.0
-            except (ValueError, IndexError):
-                pass
-        elif line == "progress=continue" or line == "progress=end":
-            # Update progress
-            if total_duration > 0 and current_time_s > 0:
-                progress_pct = min(current_time_s / total_duration, 1.0)
-                elapsed = time.time() - start_time
-
-                if elapsed > 0 and progress_pct > 0:
-                    eta_seconds = (elapsed / progress_pct) * (1.0 - progress_pct)
-                    eta_str = _format_eta(eta_seconds)
-                else:
-                    eta_str = "calculating..."
-
-                # Report every 2 seconds to avoid spam
-                now = time.time()
-                if now - last_report_time >= 2.0:
-                    report_progress(
-                        int(progress_pct * 100),
-                        100,
-                        f"Encoding: {int(progress_pct * 100)}% (ETA: {eta_str})"
-                    )
-                    last_report_time = now
-
-    # Wait for process to complete
-    process.wait()
-
-    if process.returncode != 0:
-        stderr = process.stderr.read()
-        log.error(f"[concat] FFmpeg failed: {stderr}")
-        raise subprocess.CalledProcessError(process.returncode, cmd)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log.error(f"[concat] FFmpeg failed: {result.stderr}")
+        raise subprocess.CalledProcessError(result.returncode, cmd)
 
     # Step 3: Finalize output
     report_progress(3, 3, "Finalizing output...")
-    
-    # Get final file size
+
     file_size_mb = out.stat().st_size / (1024 * 1024)
-    log.info(f"[concat] Final 1080p reel: {out}")
-    log.info(f"[concat] File size: {file_size_mb:.1f} MB")
-    
-    # Warn if approaching Facebook limits
-    if file_size_mb > 4000:  # 4GB
-        log.warning(f"[concat] File size ({file_size_mb:.1f} MB) exceeds 4GB - may have upload issues")
-    elif file_size_mb > 3000:  # 3GB
-        log.warning(f"[concat] File size ({file_size_mb:.1f} MB) is large - upload may be slow")
-    
-    log.info("[concat] ✅ Output is Facebook-compliant (1080p, H.264, 30fps, AAC audio)")
-    log.info("[concat] ✅ Intro, middle segments, and outro are all Strava-compliant (≤30s each)")
+    log.info(f"[concat] Final reel: {out} ({file_size_mb:.1f} MB)")
+
+    if file_size_mb > 4000:
+        log.warning(f"[concat] File size ({file_size_mb:.1f} MB) exceeds 4GB — may have upload issues")
 
     try:
         concat_list.unlink()

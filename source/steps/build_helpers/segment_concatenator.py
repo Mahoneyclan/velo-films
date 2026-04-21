@@ -348,7 +348,8 @@ class SegmentConcatenator:
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",
-            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE, "-pix_fmt", "yuv420p",
+            "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE,
+            "-pix_fmt", "yuv420p", "-color_range", "1",
             "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
             str(output_path)
         ])
@@ -473,7 +474,8 @@ class SegmentConcatenator:
                 "-i", str(clip),
                 "-vf", video_filter,
                 "-af", audio_filter,
-                "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE, "-pix_fmt", "yuv420p",
+                "-c:v", get_optimal_video_codec(), "-b:v", CFG.BITRATE, "-maxrate", CFG.MAXRATE, "-bufsize", CFG.BUFSIZE,
+                "-pix_fmt", "yuv420p", "-color_range", "1",
                 "-c:a", "aac", "-ar", AUDIO_SAMPLE_RATE,
                 str(output_path)
             ]
